@@ -1,0 +1,5 @@
+-P ubuntu-latest=node:16-buster-slim
+-P macos-latest=node:16-buster-slim
+-P windows-latest=node:16-buster-slim
+-P actions/checkout@v4=node:16-buster-slim
+-P actions/setup-python@v5=python:3.11-slim-buster
