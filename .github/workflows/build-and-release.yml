@@ -62,13 +62,11 @@ jobs:
             ASSET_NAME="${{ env.PROJECT_NAME }}-linux-amd64"
           fi
           
-          # Check if the asset file exists. This is a good practice.
           if [ ! -f "${ASSET_PATH}" ]; then
             echo "Error: Built asset not found at ${ASSET_PATH}"
             exit 1
           fi
 
-          # Set environment variables for subsequent steps
           echo "ASSET_PATH=${ASSET_PATH}" >> $GITHUB_ENV
           echo "ASSET_NAME=${ASSET_NAME}" >> $GITHUB_ENV
           
@@ -90,3 +88,5 @@ jobs:
           asset_path: ${{ env.ASSET_PATH }}
           asset_name: ${{ env.ASSET_NAME }}
           asset_content_type: application/octet-stream
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
