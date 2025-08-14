@@ -1,0 +1,2 @@
+# No Python dependencies required
+# FFmpeg must be installed separately on the system
