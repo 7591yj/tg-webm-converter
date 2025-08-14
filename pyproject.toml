@@ -30,6 +30,7 @@ packages = [{ include = "tg_webm_converter", from = "src" }]
 
 [tool.poetry.dependencies]
 python = "^3.12"
+click = "^8.1.7"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.0"

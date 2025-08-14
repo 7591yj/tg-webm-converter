@@ -2,7 +2,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from .converter import TgWebMConverter
+from tg_webm_converter.converter import TgWebMConverter
 
 
 def main():
