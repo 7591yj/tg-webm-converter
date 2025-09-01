@@ -2,7 +2,7 @@ import argparse
 import logging.handlers
 import sys
 
-from tg_webm_converter.runner import ConversionRuner
+from tg_webm_converter.runner import ConversionRunner
 
 
 def parse_arguments():
@@ -51,12 +51,14 @@ Examples:
 def main():
     """Main CLI entry point."""
     logging.basicConfig(
-        level=logging.INFO, format="%(levelname)s: %(message)s"
+        level=logging.INFO,
+        format="%(levelname)s: %(message)s",
+        stream=sys.stdout,
     )
     args = parse_arguments()
 
     try:
-        runner = ConversionRuner(args)
+        runner = ConversionRunner(args)
         success = runner.run()
         sys.exit(0 if success else 1)
     except KeyboardInterrupt:

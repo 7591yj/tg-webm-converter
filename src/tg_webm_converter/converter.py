@@ -1,6 +1,6 @@
-import os
+import logging
+import shutil
 import subprocess
-import tempfile
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -73,7 +73,7 @@ class TgWebMConverter:
     def _reduce_file_size(self, file_path: Path, max_size: int, bitrate: str, crf: str) -> bool:
         """Re-encodes the WebM file to reduce the size"""
         if file_path.stat().st_size <= max_size:
-            return True # Already within size limit
+            return True  # Already within size limit
 
         logging.info("File is too large, attempting to reduce size for %s...", file_path.name)
         temp_output = file_path.with_suffix('.tmp.webm')

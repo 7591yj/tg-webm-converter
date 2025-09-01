@@ -4,7 +4,7 @@ from pathlib import Path
 from tg_webm_converter import TgWebMConverter
 
 
-class ConversionRuner:
+class ConversionRunner:
     """Orchestrates the file conversion process, based on the CLI arguments."""
 
     def __init__(self, args):
