@@ -2,199 +2,172 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import List
+from typing import List, Optional, Tuple
 
 
 class TgWebMConverter:
-    """Handles conversion of images to WebM format for stickers and icons."""
+    """Handles conversion of media files to WebM format."""
 
-    SUPPORTED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff']
+    SUPPORTED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.mp4']
     ICON_MAX_SIZE = 32 * 1024  # 32KB
     STICKER_MAX_SIZE = 256 * 1024  # 256KB
 
     def __init__(self, output_dir: str = "./webm"):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
+        self._check_dependencies()
 
-    def _run_ffmpeg(self, args: List[str]) -> bool:
-        """Run ffmpeg command and return success status."""
+    def _check_dependencies(self):
+        """Check if ffmpeg and ffprobe are installed and accessible."""
+        for cmd in ['ffmpeg', 'ffprobe']:
+            if not shutil.which(cmd):
+                logging.error("%s not found. Please install it and ensure it's in your PATH.", cmd)
+                raise FileNotFoundError(f"Required command not found: {cmd}")
+
+    def _run_command(self, args: List[str]) -> bool:
+        """
+        Run a subprocess command; log errors if any.
+
+        :return: True on success (return 0), False otherwise
+        """
         try:
-            with tempfile.NamedTemporaryFile(mode='w+', delete=False) as logfile:
-                result = subprocess.run(
-                    ['ffmpeg'] + args,
-                    stdout=subprocess.DEVNULL,
-                    stderr=logfile,
-                    text=True
+            result = subprocess.run(
+                args, capture_output=True, text=True, check=False
+            )
+            if result.returncode != 0:
+                logging.error(
+                    "Command failed: %s\nStderr: %s",
+                    " ".join(args),
+                    result.stderr.strip(),
                 )
-
-                if result.returncode != 0:
-                    logfile.seek(0)
-                    print(f"❌ FFmpeg error: {logfile.read()}")
-                    return False
-
-                return True
+                return False
+            return True
         except FileNotFoundError:
-            print("❌ Error: ffmpeg not found. Please install ffmpeg.")
+            # FALLBACK; _check_dependencies() should have already checked this
+            logging.error("Command not found: %s", args[0])
             return False
-        finally:
-            if 'logfile' in locals():
-                os.unlink(logfile.name)
+        except Exception as e:
+            logging.error("An unexpected error occurred while running command: %s", str(e))
+            return False
+
+    def _get_media_dimensions(self, input_path: Path) -> Optional[Tuple[int, int]]:
+        """Get the width and height of a media file, using ffprobe"""
+        args = [
+            "ffprobe",
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height",
+            "-of", "csv=p=0:s=x",
+            str(input_path),
+        ]
+        try:
+            result = subprocess.run(
+                args, capture_output=True, text=True, check=True
+            )
+            width, height = map(int, result.stdout.strip().split('x'))
+            return width, height
+        except (subprocess.SubprocessError, ValueError) as e:
+            logging.error("Failed to get dimensions for %s: %s", input_path.name, e)
+            return None
+
+    def _reduce_file_size(self, file_path: Path, max_size: int, bitrate: str, crf: str) -> bool:
+        """Re-encodes the WebM file to reduce the size"""
+        if file_path.stat().st_size <= max_size:
+            return True # Already within size limit
+
+        logging.info("File is too large, attempting to reduce size for %s...", file_path.name)
+        temp_output = file_path.with_suffix('.tmp.webm')
+
+        args = [
+            "ffmpeg", "-y", "-i", str(file_path),
+            "-c:v", "libvpx-vp9",
+            "-b:v", bitrate,
+            "-crf", crf,
+            "-pix_fmt", "yuva420p",
+            str(temp_output),
+        ]
+
+        if not self._run_command(args):
+            logging.error("Failed during size reduction step.")
+            if temp_output.exists():
+                temp_output.unlink()
+            return False
+
+        temp_output.replace(file_path)
+        final_size = file_path.stat().st_size
+        if final_size > max_size:
+            logging.warning(
+                "Could not reduce %s below %dKB. Final size: %dKB",
+                file_path.name, max_size // 1024, final_size // 1024,
+            )
+        return True
 
     def convert_to_icon(self, input_file: str) -> bool:
-        """Convert image to 100x100 icon WebM (max 32KB)."""
+        """Convert media to a 100x100 icon WebM."""
         input_path = Path(input_file)
-        if not input_path.exists():
-            print(f"❌ Error: File '{input_file}' does not exist")
-            return False
-
         output_path = self.output_dir / f"{input_path.stem}_icon.webm"
-        print(f"Converting to icon: {input_path.name:<30} ", end="", flush=True)
 
-        # Icon filter: pad to 100x100 square with transparent background
+        # 100x100 square with a transparent background
         filter_str = (
-            "scale='if(gt(iw,ih),100,-1)':'if(gt(ih,iw),100,-1)',"
-            "scale='min(iw,100)':'min(ih,100)',"
+            "scale='min(100,iw)':'min(100,ih)':flags=lanczos,"
             "pad=100:100:(ow-iw)/2:(oh-ih)/2:color=0x00000000"
         )
 
-        # Initial conversion
         args = [
-            '-y', '-loglevel', 'error',
-            '-i', str(input_path),
-            '-vf', f"{filter_str},fps=30",
-            '-t', '3',
-            '-an',
-            '-c:v', 'libvpx-vp9',
-            '-b:v', '150K',
-            '-crf', '25',
-            '-pix_fmt', 'yuva420p',
-            str(output_path)
+            "ffmpeg", "-y", "-i", str(input_path),
+            "-vf", f"{filter_str},fps=30",
+            "-t", "3", "-an",
+            "-c:v", "libvpx-vp9",
+            "-b:v", "128K", "-crf", "35",
+            "-pix_fmt", "yuva420p",
+            str(output_path),
         ]
 
-        if not self._run_ffmpeg(args):
-            print("❌ Failed")
+        if not self._run_command(args):
             return False
 
-        # Check and reduce file size if needed
-        file_size = output_path.stat().st_size
-        bitrate = 150
-        crf = 25
-
-        while file_size > self.ICON_MAX_SIZE and bitrate > 50:
-            bitrate -= 20
-            crf += 3
-            if crf > 45:
-                crf = 45
-
-            temp_output = output_path.with_suffix('.tmp.webm')
-            args = [
-                '-y', '-loglevel', 'error',
-                '-i', str(input_path),
-                '-vf', f"{filter_str},fps=30",
-                '-t', '3',
-                '-an',
-                '-c:v', 'libvpx-vp9',
-                '-b:v', f'{bitrate}K',
-                '-crf', str(crf),
-                '-pix_fmt', 'yuva420p',
-                str(temp_output)
-            ]
-
-            if not self._run_ffmpeg(args):
-                print("❌ Failed during size reduction")
-                return False
-
-            temp_output.replace(output_path)
-            file_size = output_path.stat().st_size
-
-        if file_size > self.ICON_MAX_SIZE:
-            print(f"⚠️  Warning: Could not reduce below 32KB (current: {file_size // 1024}KB)")
-        else:
-            print(f"✅ Done ({file_size // 1024}KB)")
-
-        return True
+        return self._reduce_file_size(
+            output_path, self.ICON_MAX_SIZE, bitrate="96K", crf="45"
+        )
 
     def convert_to_sticker(self, input_file: str) -> bool:
-        """Convert image to 512x512 sticker WebM."""
+        """Convert media to a 512px sticker WebM."""
         input_path = Path(input_file)
-        if not input_path.exists():
-            print(f"❌ Error: File '{input_file}' does not exist")
-            return False
-
         output_path = self.output_dir / f"{input_path.stem}.webm"
-        print(f"Converting to sticker: {input_path.name:<30} ", end="", flush=True)
 
-        # Get original dimensions using ffprobe
-        try:
-            width_result = subprocess.run([
-                'ffprobe', '-v', 'error', '-select_streams', 'v:0',
-                '-show_entries', 'stream=width', '-of', 'csv=p=0',
-                str(input_path)
-            ], capture_output=True, text=True)
-
-            height_result = subprocess.run([
-                'ffprobe', '-v', 'error', '-select_streams', 'v:0',
-                '-show_entries', 'stream=height', '-of', 'csv=p=0',
-                str(input_path)
-            ], capture_output=True, text=True)
-
-            width = int(width_result.stdout.strip())
-            height = int(height_result.stdout.strip())
-
-        except (subprocess.SubprocessError, ValueError):
-            print("❌ Failed to get image dimensions")
+        dimensions = self._get_media_dimensions(input_path)
+        if not dimensions:
             return False
+        width, height = dimensions
 
-        # Determine scale filter
-        if width >= height:
-            filter_str = "scale=512:-1:flags=lanczos"
-        else:
-            filter_str = "scale=-1:512:flags=lanczos"
+        # Scale to 512px on the longest side
+        scale_filter = "scale=512:-1:flags=lanczos"
+        if height > width:
+            scale_filter = "scale=-1:512:flags=lanczos"
 
         args = [
-            '-y', '-loglevel', 'error',
-            '-i', str(input_path),
-            '-vf', f"{filter_str},fps=30",
-            '-t', '3',
-            '-an',
-            '-c:v', 'libvpx-vp9',
-            '-b:v', '256K',
-            '-crf', '30',
-            '-pix_fmt', 'yuva420p',
-            str(output_path)
+            "ffmpeg", "-y", "-i", str(input_path),
+            "-vf", f"{scale_filter},fps=30",
+            "-t", "3", "-an",
+            "-c:v", "libvpx-vp9",
+            "-b:v", "256K", "-crf", "30",
+            "-pix_fmt", "yuva420p",
+            str(output_path),
         ]
 
-        if not self._run_ffmpeg(args):
-            print("❌ Failed")
+        if not self._run_command(args):
             return False
 
-        # Check file size and reduce if needed
-        file_size = output_path.stat().st_size
-        if file_size > self.STICKER_MAX_SIZE:
-            temp_output = output_path.with_suffix('.tmp.webm')
-            args = [
-                '-y', '-loglevel', 'error',
-                '-i', str(output_path),
-                '-c:v', 'libvpx-vp9',
-                '-b:v', '200K',
-                '-crf', '35',
-                '-pix_fmt', 'yuva420p',
-                str(temp_output)
-            ]
-
-            if not self._run_ffmpeg(args):
-                print("❌ Failed during size reduction")
-                return False
-
-            temp_output.replace(output_path)
-
-        print("✅ Done")
-        return True
+        return self._reduce_file_size(
+            output_path, self.STICKER_MAX_SIZE, bitrate="200K", crf="35"
+        )
 
     def find_supported_files(self) -> List[Path]:
-        """Find all supported image files in current directory."""
-        files = []
-        for ext in self.SUPPORTED_EXTENSIONS:
-            files.extend(Path('.').glob(f'*{ext}'))
-            files.extend(Path('.').glob(f'*{ext.upper()}'))
-        return sorted(files)
+        """Find all supported media files in the current directory."""
+        files = [
+            p
+            for ext in self.SUPPORTED_EXTENSIONS
+            for p in Path(".").glob(f"*{ext}")
+        ]
+        # Remove duplicates from case-insensitivity (e.g. .png, .PNG)
+        return sorted(list(set(files)))
