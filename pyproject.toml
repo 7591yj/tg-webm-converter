@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "tg-webm-converter"
-version = "0.1.0"
+version = "0.1.1"
 description = "Convert images to Telegram WebM stickers."
 authors = ["Yeongjin Kim <77034308+7591yj@users.noreply.github.com>"]
 license = "MIT"
