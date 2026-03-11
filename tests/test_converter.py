@@ -1,450 +1,482 @@
-from pathlib import Path
-from unittest.mock import patch, MagicMock
-import pytest
 import logging
 import subprocess
+from unittest.mock import MagicMock, patch
 
-# Assuming TgWebMConverter is in tg_webm_converter/converter.py
-from tg_webm_converter.converter import TgWebMConverter
+import pytest
+
+from tg_webm_converter.converter import ConversionResult, ConversionTask, TgWebMConverter
 
 
 @pytest.fixture
 def converter(tmp_path):
-    """Fixture for a TgWebMConverter instance."""
     output_dir = tmp_path / "output"
     output_dir.mkdir()
-    with patch('shutil.which', return_value="/usr/bin/ffmpeg"):
+    with patch("shutil.which", return_value="/usr/bin/tool"):
         yield TgWebMConverter(str(output_dir))
 
 
-@pytest.fixture
-def mock_subprocess_run():
-    """Mocks subprocess.run for various scenarios."""
-    with patch('subprocess.run') as mock_run:
-        yield mock_run
+def test_init_checks_custom_dependency_commands(tmp_path):
+    output_dir = tmp_path / "nested" / "output"
+
+    with patch("shutil.which") as which_mock:
+        which_mock.side_effect = ["/usr/bin/custom-ffmpeg", None]
+
+        with pytest.raises(FileNotFoundError, match="custom-ffprobe"):
+            TgWebMConverter(
+                str(output_dir),
+                ffmpeg_command="custom-ffmpeg",
+                ffprobe_command="custom-ffprobe",
+            )
+
+    assert [call.args[0] for call in which_mock.call_args_list] == [
+        "custom-ffmpeg",
+        "custom-ffprobe",
+    ]
 
 
-class TestTgWebMConverter:
-    """Test cases for TgWebMConverter class."""
+def test_run_command_logs_failures(converter, caplog):
+    with patch("subprocess.run", return_value=MagicMock(returncode=1, stderr="boom")):
+        with caplog.at_level(logging.ERROR):
+            assert converter._run_command(["ffmpeg", "-version"]) is False
 
-    def test_init_creates_output_directory(self, tmp_path):
-        """Test that initialization creates output directory."""
-        output_dir = tmp_path / "test_output"
-        with patch('shutil.which', return_value="/usr/bin/ffmpeg"):
-            converter = TgWebMConverter(str(output_dir))
-
-        assert output_dir.exists()
-        assert converter.output_dir == output_dir
-
-    def test_init_with_existing_directory(self, tmp_path):
-        """Test initialization with existing output directory."""
-        output_dir = tmp_path / "existing"
-        output_dir.mkdir()
-
-        with patch('shutil.which', return_value="/usr/bin/ffmpeg"):
-            converter = TgWebMConverter(str(output_dir))
-        assert converter.output_dir == output_dir
-
-    def test_init_checks_dependencies(self, tmp_path):
-        """Test that initialization checks for ffmpeg and ffprobe."""
-        output_dir = tmp_path / "test_output"
-        with patch('shutil.which') as mock_which:
-            mock_which.side_effect = [None, "/usr/bin/ffprobe"]  # ffmpeg not found
-            with pytest.raises(FileNotFoundError, match="ffmpeg"):
-                TgWebMConverter(str(output_dir))
-
-            mock_which.reset_mock()
-            mock_which.side_effect = ["/usr/bin/ffmpeg", None]  # ffprobe not found
-            with pytest.raises(FileNotFoundError, match="ffprobe"):
-                TgWebMConverter(str(output_dir))
-
-            mock_which.reset_mock()
-            mock_which.side_effect = ["/usr/bin/ffmpeg", "/usr/bin/ffprobe"]
-            TgWebMConverter(str(output_dir))  # Should succeed
-
-    def test_supported_extensions(self):
-        """Test that supported extensions are correctly defined."""
-        expected_extensions = [
-            '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.mp4'
-        ]
-        assert TgWebMConverter.SUPPORTED_EXTENSIONS == expected_extensions
-
-    def test_size_limits(self):
-        """Test that size limits are correctly defined."""
-        assert TgWebMConverter.ICON_MAX_SIZE == 32 * 1024  # 32KB
-        assert TgWebMConverter.STICKER_MAX_SIZE == 256 * 1024  # 256KB
+    assert "Command failed: ffmpeg -version" in caplog.text
+    assert "Stderr: boom" in caplog.text
 
 
-class TestRunCommand:
-    """Test cases for _run_command method."""
+def test_run_command_returns_true_on_success(converter):
+    with patch("subprocess.run", return_value=MagicMock(returncode=0)):
+        assert converter._run_command(["ffmpeg", "-version"]) is True
 
-    def test_run_command_success(self, converter, mock_subprocess_run):
-        """Test successful command execution."""
-        mock_subprocess_run.return_value = MagicMock(
-            returncode=0, stdout="success", stderr=""
+
+def test_run_command_handles_missing_binary(converter, caplog):
+    with patch("subprocess.run", side_effect=FileNotFoundError):
+        with caplog.at_level(logging.ERROR):
+            assert converter._run_command(["missing-cmd"]) is False
+
+    assert "Command not found: missing-cmd" in caplog.text
+
+
+def test_run_command_handles_unexpected_errors(converter, caplog):
+    with patch("subprocess.run", side_effect=RuntimeError("bad things")):
+        with caplog.at_level(logging.ERROR):
+            assert converter._run_command(["ffmpeg"]) is False
+
+    assert "An unexpected error occurred while running command: bad things" in caplog.text
+
+
+def test_get_media_dimensions_parses_ffprobe_output(converter, tmp_path):
+    input_path = tmp_path / "sample.mp4"
+    input_path.write_bytes(b"video")
+
+    with patch(
+        "subprocess.run",
+        return_value=MagicMock(stdout="1920x1080\n"),
+    ) as run_mock:
+        dimensions = converter._get_media_dimensions(input_path)
+
+    assert dimensions == (1920, 1080)
+    assert run_mock.call_args.args[0][0] == "ffprobe"
+
+
+def test_get_media_dimensions_returns_none_on_invalid_output(
+    converter, tmp_path, caplog
+):
+    input_path = tmp_path / "sample.mp4"
+    input_path.write_bytes(b"video")
+
+    with patch(
+        "subprocess.run",
+        return_value=MagicMock(stdout="not-dimensions"),
+    ):
+        with caplog.at_level(logging.ERROR):
+            dimensions = converter._get_media_dimensions(input_path)
+
+    assert dimensions is None
+    assert f"Failed to get dimensions for {input_path.name}" in caplog.text
+
+
+def test_get_media_dimensions_returns_none_on_subprocess_error(
+    converter, tmp_path, caplog
+):
+    input_path = tmp_path / "sample.mp4"
+    input_path.write_bytes(b"video")
+
+    with patch(
+        "subprocess.run",
+        side_effect=subprocess.SubprocessError("ffprobe failed"),
+    ):
+        with caplog.at_level(logging.ERROR):
+            dimensions = converter._get_media_dimensions(input_path)
+
+    assert dimensions is None
+    assert "ffprobe failed" in caplog.text
+
+
+def test_reduce_file_size_returns_early_for_small_files(converter, tmp_path):
+    output_path = tmp_path / "small.webm"
+    output_path.write_bytes(b"x" * 1024)
+
+    with patch.object(converter, "_run_command") as run_mock:
+        assert (
+            converter._reduce_file_size(
+                output_path,
+                TgWebMConverter.ICON_MAX_SIZE,
+                bitrate="96K",
+                crf="45",
+            )
+            is True
         )
-        result = converter._run_command(['echo', 'hello'])
-        assert result is True
-        mock_subprocess_run.assert_called_once()
 
-    def test_run_command_failure(self, converter, mock_subprocess_run, caplog):
-        """Test failed command execution."""
-        mock_subprocess_run.return_value = MagicMock(
-            returncode=1, stdout="", stderr="command failed"
+    run_mock.assert_not_called()
+
+
+def test_reduce_file_size_reencodes_large_files(converter, tmp_path):
+    output_path = tmp_path / "large.webm"
+    output_path.write_bytes(b"x" * 50000)
+    temp_output = tmp_path / "large.tmp.webm"
+
+    def fake_run_command(args):
+        temp_output.write_bytes(b"y" * 20000)
+        return True
+
+    with patch.object(converter, "_run_command", side_effect=fake_run_command) as run_mock:
+        assert (
+            converter._reduce_file_size(
+                output_path,
+                TgWebMConverter.ICON_MAX_SIZE,
+                bitrate="96K",
+                crf="45",
+            )
+            is True
         )
-        with caplog.at_level(logging.ERROR):
-            result = converter._run_command(['bad_command'])
-            assert result is False
-            assert "Command failed: bad_command" in caplog.text
-            assert "Stderr: command failed" in caplog.text
 
-    def test_run_command_not_found(self, converter, mock_subprocess_run, caplog):
-        """Test command not found error."""
-        mock_subprocess_run.side_effect = FileNotFoundError
-        with caplog.at_level(logging.ERROR):
-            result = converter._run_command(['non_existent_cmd'])
-            assert result is False
-            assert "Command not found: non_existent_cmd" in caplog.text
-
-    def test_run_command_unexpected_error(self, converter, mock_subprocess_run, caplog):
-        """Test an unexpected error during command execution."""
-        mock_subprocess_run.side_effect = Exception("test error")
-        with caplog.at_level(logging.ERROR):
-            result = converter._run_command(['some_cmd'])
-            assert result is False
-            assert "An unexpected error occurred while running command: test error" in caplog.text
+    assert output_path.stat().st_size == 20000
+    assert "libvpx-vp9" in run_mock.call_args.args[0]
+    assert "96K" in run_mock.call_args.args[0]
+    assert "45" in run_mock.call_args.args[0]
 
 
-class TestGetMediaDimensions:
-    """Test cases for _get_media_dimensions method."""
+def test_reduce_file_size_removes_temp_output_on_failure(converter, tmp_path):
+    output_path = tmp_path / "large.webm"
+    output_path.write_bytes(b"x" * 50000)
+    temp_output = tmp_path / "large.tmp.webm"
+    temp_output.write_bytes(b"stale")
 
-    def test_get_media_dimensions_success(self, converter, mock_subprocess_run, tmp_path):
-        """Test successful retrieval of media dimensions."""
-        mock_subprocess_run.return_value = MagicMock(
-            returncode=0, stdout="1920x1080\n", stderr=""
+    with patch.object(converter, "_run_command", return_value=False):
+        assert (
+            converter._reduce_file_size(
+                output_path,
+                TgWebMConverter.ICON_MAX_SIZE,
+                bitrate="96K",
+                crf="45",
+            )
+            is False
         )
-        dummy_file = tmp_path / "dummy.mp4"
-        dummy_file.touch()
 
-        dimensions = converter._get_media_dimensions(dummy_file)
-        assert dimensions == (1920, 1080)
-        mock_subprocess_run.assert_called_once()
-
-    def test_get_media_dimensions_failure(self, converter, mock_subprocess_run, tmp_path, caplog):
-        """Test failure to retrieve media dimensions."""
-        mock_subprocess_run.side_effect = subprocess.SubprocessError("ffprobe error")
-        dummy_file = tmp_path / "dummy.mp4"
-        dummy_file.touch()
-
-        with caplog.at_level(logging.ERROR):
-            dimensions = converter._get_media_dimensions(dummy_file)
-            assert dimensions is None
-            assert f"Failed to get dimensions for {dummy_file.name}: ffprobe error" in caplog.text
-
-    def test_get_media_dimensions_invalid_output(self, converter, mock_subprocess_run, tmp_path, caplog):
-        """Test ffprobe returning invalid output for dimensions."""
-        mock_subprocess_run.return_value = MagicMock(
-            returncode=0, stdout="invalid_output\n", stderr=""
-        )
-        dummy_file = tmp_path / "dummy.mp4"
-        dummy_file.touch()
-
-        with caplog.at_level(logging.ERROR):
-            dimensions = converter._get_media_dimensions(dummy_file)
-            assert dimensions is None
-            assert f"Failed to get dimensions for {dummy_file.name}: " in caplog.text
+    assert temp_output.exists() is False
 
 
-class TestReduceFileSize:
-    """Test cases for _reduce_file_size method."""
+def test_reduce_file_size_warns_when_output_is_still_too_large(
+    converter, tmp_path, caplog
+):
+    output_path = tmp_path / "large.webm"
+    output_path.write_bytes(b"x" * 50000)
+    temp_output = tmp_path / "large.tmp.webm"
 
-    def test_reduce_file_size_already_small_enough(self, converter, tmp_path):
-        """Test when file is already within size limit."""
-        dummy_file = tmp_path / "small.webm"
-        dummy_file.write_bytes(b"a" * 10000)  # 10KB
-        assert dummy_file.stat().st_size < TgWebMConverter.ICON_MAX_SIZE
+    def fake_run_command(args):
+        temp_output.write_bytes(b"y" * 40000)
+        return True
 
-        result = converter._reduce_file_size(dummy_file, TgWebMConverter.ICON_MAX_SIZE, "96K", "45")
-        assert result is True
-        # Ensure ffmpeg command was not run
-        with patch('tg_webm_converter.converter.TgWebMConverter._run_command') as mock_run_command:
-            result = converter._reduce_file_size(dummy_file, TgWebMConverter.ICON_MAX_SIZE, "96K", "45")
-            mock_run_command.assert_not_called()
-
-    def test_reduce_file_size_success(self, converter, mock_subprocess_run, tmp_path):
-        """Test successful re-encoding to reduce file size."""
-        original_file = tmp_path / "large.webm"
-        original_file.write_bytes(b"a" * 100000)  # 100KB
-
-        temp_output = tmp_path / "large.tmp.webm"
-        temp_output.write_bytes(b"b" * 20000)  # 20KB (mock reduced size)
-
-        mock_subprocess_run.side_effect = [
-            MagicMock(returncode=0),  # for the ffmpeg re-encode
-        ]
-
-        with patch.object(Path, 'stat') as mock_stat:
-            mock_stat.side_effect = [
-                MagicMock(st_size=100000),  # initial size
-                MagicMock(st_size=20000),  # after re-encode and replace
-            ]
-            with patch.object(Path, 'unlink') as mock_unlink, \
-                    patch.object(Path, 'replace') as mock_replace:
-                result = converter._reduce_file_size(
-                    original_file, TgWebMConverter.ICON_MAX_SIZE, "96K", "45"
+    with patch.object(converter, "_run_command", side_effect=fake_run_command):
+        with caplog.at_level(logging.WARNING):
+            assert (
+                converter._reduce_file_size(
+                    output_path,
+                    TgWebMConverter.ICON_MAX_SIZE,
+                    bitrate="96K",
+                    crf="45",
                 )
-                assert result is True
-                mock_replace.assert_called_once_with(original_file)
-                mock_unlink.assert_not_called() # No unlink if replace is used and successful
-                assert "libvpx-vp9" in " ".join(mock_subprocess_run.call_args[0][0])
-                assert "-b:v 96K" in " ".join(mock_subprocess_run.call_args[0][0])
+                is True
+            )
+
+    assert "Could not reduce large.webm below 32KB" in caplog.text
 
 
-    def test_reduce_file_size_failure(self, converter, mock_subprocess_run, tmp_path, caplog):
-        """Test re-encoding failure during size reduction."""
-        original_file = tmp_path / "very_large.webm"
-        original_file.write_bytes(b"a" * 100000)  # 100KB
+def test_find_supported_files_is_case_insensitive(converter, tmp_path):
+    (tmp_path / "one.PNG").write_bytes(b"img")
+    (tmp_path / "two.mp4").write_bytes(b"video")
+    (tmp_path / "three.txt").write_text("x")
 
-        mock_subprocess_run.return_value = MagicMock(returncode=1)  # ffmpeg fails
-        with caplog.at_level(logging.ERROR):
-            with patch.object(Path, 'unlink') as mock_unlink:
-                result = converter._reduce_file_size(
-                    original_file, TgWebMConverter.ICON_MAX_SIZE, "96K", "45"
+    files = converter.find_supported_files(str(tmp_path))
+
+    assert files == [tmp_path / "one.PNG", tmp_path / "two.mp4"]
+
+
+def test_convert_file_rejects_unsupported_input(converter, tmp_path):
+    input_path = tmp_path / "notes.txt"
+    input_path.write_text("hello")
+
+    result = converter.convert_file(str(input_path), "icon", asset_id="asset-1")
+
+    assert result == ConversionResult(
+        asset_id="asset-1",
+        source_path=str(input_path.resolve()),
+        mode="icon",
+        success=False,
+        error=f"Unsupported input file: {input_path.resolve()}",
+    )
+
+
+def test_convert_file_returns_structured_failure_for_missing_file(
+    converter, tmp_path
+):
+    result = converter.convert_file(
+        str(tmp_path / "missing.png"),
+        "icon",
+        asset_id="asset-1",
+    )
+
+    assert result == ConversionResult(
+        asset_id="asset-1",
+        source_path=str((tmp_path / "missing.png").resolve()),
+        mode="icon",
+        success=False,
+        error=f"Input file not found: {(tmp_path / 'missing.png').resolve()}",
+    )
+
+
+def test_convert_file_rejects_unknown_mode(converter, tmp_path):
+    input_path = tmp_path / "sample.png"
+    input_path.write_bytes(b"img")
+
+    result = converter.convert_file(str(input_path), "preview", asset_id="asset-1")
+
+    assert result == ConversionResult(
+        asset_id="asset-1",
+        source_path=str(input_path.resolve()),
+        mode="preview",
+        success=False,
+        error="Unsupported conversion mode: preview",
+    )
+
+
+def test_convert_file_returns_structured_success_for_icon(converter, tmp_path):
+    input_path = tmp_path / "icon.png"
+    input_path.write_bytes(b"img")
+    output_path = converter.output_dir / "icon.webm"
+    output_path.write_bytes(b"x" * 128)
+
+    with patch.object(
+        converter, "_run_command", return_value=True
+    ) as run_mock, patch.object(converter, "_reduce_file_size", return_value=True):
+        result = converter.convert_file(
+            str(input_path),
+            "icon",
+            output_filename="icon.webm",
+            asset_id="asset-1",
+        )
+
+    assert result.success is True
+    assert result.asset_id == "asset-1"
+    assert result.output_path == str(output_path)
+    assert result.size_bytes == 128
+    assert "scale='min(100,iw)':'min(100,ih)':flags=lanczos" in " ".join(
+        run_mock.call_args.args[0]
+    )
+    assert "pad=100:100:(ow-iw)/2:(oh-ih)/2:color=0x00000000,fps=30" in " ".join(
+        run_mock.call_args.args[0]
+    )
+
+
+def test_convert_file_returns_icon_failure_when_ffmpeg_fails(converter, tmp_path):
+    input_path = tmp_path / "icon.png"
+    input_path.write_bytes(b"img")
+
+    with patch.object(
+        converter, "_run_command", return_value=False
+    ) as run_mock, patch.object(converter, "_reduce_file_size") as reduce_mock:
+        result = converter.convert_file(str(input_path), "icon", asset_id="asset-1")
+
+    assert result == ConversionResult(
+        asset_id="asset-1",
+        source_path=str(input_path.resolve()),
+        mode="icon",
+        success=False,
+        error="ffmpeg failed during icon conversion",
+    )
+    run_mock.assert_called_once()
+    reduce_mock.assert_not_called()
+
+
+def test_convert_file_returns_icon_failure_when_reduction_fails(converter, tmp_path):
+    input_path = tmp_path / "icon.png"
+    input_path.write_bytes(b"img")
+
+    with patch.object(
+        converter, "_run_command", return_value=True
+    ), patch.object(converter, "_reduce_file_size", return_value=False):
+        result = converter.convert_file(str(input_path), "icon", asset_id="asset-1")
+
+    assert result == ConversionResult(
+        asset_id="asset-1",
+        source_path=str(input_path.resolve()),
+        mode="icon",
+        success=False,
+        error="Failed to reduce icon file size",
+    )
+
+
+def test_convert_file_returns_structured_success_for_landscape_sticker(
+    converter, tmp_path
+):
+    input_path = tmp_path / "sample.png"
+    input_path.write_bytes(b"img")
+    output_path = converter.output_dir / "sample.webm"
+    output_path.write_bytes(b"x" * 256)
+
+    with patch.object(
+        converter, "_get_media_dimensions", return_value=(1000, 500)
+    ), patch.object(converter, "_run_command", return_value=True) as run_mock, patch.object(
+        converter, "_reduce_file_size", return_value=True
+    ):
+        result = converter.convert_file(str(input_path), "sticker", asset_id="asset-1")
+
+    assert result.success is True
+    assert result.output_path == str(output_path)
+    assert "scale=512:-1:flags=lanczos,fps=30" in run_mock.call_args.args[0]
+
+
+def test_convert_file_returns_structured_success_for_portrait_sticker(
+    converter, tmp_path
+):
+    input_path = tmp_path / "sample.png"
+    input_path.write_bytes(b"img")
+    output_path = converter.output_dir / "sample.webm"
+    output_path.write_bytes(b"x" * 256)
+
+    with patch.object(
+        converter, "_get_media_dimensions", return_value=(500, 1000)
+    ), patch.object(converter, "_run_command", return_value=True) as run_mock, patch.object(
+        converter, "_reduce_file_size", return_value=True
+    ):
+        result = converter.convert_file(str(input_path), "sticker", asset_id="asset-1")
+
+    assert result.success is True
+    assert result.output_path == str(output_path)
+    assert "scale=-1:512:flags=lanczos,fps=30" in run_mock.call_args.args[0]
+
+
+def test_convert_file_returns_sticker_failure_when_ffmpeg_fails(converter, tmp_path):
+    input_path = tmp_path / "sample.png"
+    input_path.write_bytes(b"img")
+
+    with patch.object(
+        converter, "_get_media_dimensions", return_value=(1000, 500)
+    ), patch.object(converter, "_run_command", return_value=False), patch.object(
+        converter, "_reduce_file_size"
+    ) as reduce_mock:
+        result = converter.convert_file(str(input_path), "sticker", asset_id="asset-1")
+
+    assert result == ConversionResult(
+        asset_id="asset-1",
+        source_path=str(input_path.resolve()),
+        mode="sticker",
+        success=False,
+        error="ffmpeg failed during sticker conversion",
+    )
+    reduce_mock.assert_not_called()
+
+
+def test_convert_file_returns_sticker_failure_when_reduction_fails(
+    converter, tmp_path
+):
+    input_path = tmp_path / "sample.png"
+    input_path.write_bytes(b"img")
+
+    with patch.object(
+        converter, "_get_media_dimensions", return_value=(1000, 500)
+    ), patch.object(converter, "_run_command", return_value=True), patch.object(
+        converter, "_reduce_file_size", return_value=False
+    ):
+        result = converter.convert_file(str(input_path), "sticker", asset_id="asset-1")
+
+    assert result == ConversionResult(
+        asset_id="asset-1",
+        source_path=str(input_path.resolve()),
+        mode="sticker",
+        success=False,
+        error="Failed to reduce sticker file size",
+    )
+
+
+def test_convert_file_returns_sticker_failure_when_dimensions_unavailable(
+    converter, tmp_path
+):
+    input_path = tmp_path / "sample.png"
+    input_path.write_bytes(b"img")
+
+    with patch.object(converter, "_get_media_dimensions", return_value=None):
+        result = converter.convert_file(str(input_path), "sticker", asset_id="asset-1")
+
+    assert result == ConversionResult(
+        asset_id="asset-1",
+        source_path=str(input_path.resolve()),
+        mode="sticker",
+        success=False,
+        error="Failed to read media dimensions",
+    )
+
+
+def test_convert_tasks_supports_output_overrides(converter, tmp_path):
+    input_path = tmp_path / "sample.png"
+    input_path.write_bytes(b"img")
+    output_path = converter.output_dir / "custom.webm"
+    output_path.write_bytes(b"x" * 32)
+
+    with patch.object(
+        converter, "_run_command", return_value=True
+    ), patch.object(converter, "_reduce_file_size", return_value=True):
+        results = converter.convert_tasks(
+            [
+                ConversionTask(
+                    asset_id="asset-2", source_path=str(input_path), mode="icon"
                 )
-                assert result is False
-                assert "Failed during size reduction step." in caplog.text
-                mock_unlink.assert_not_called() # temp file is created and then unlinked by the method
+            ],
+            output_name_overrides={"asset-2": "custom.webm"},
+        )
 
-    def test_reduce_file_size_still_too_large(self, converter, mock_subprocess_run, tmp_path, caplog):
-        """Test when re-encoding doesn't reduce file below max_size."""
-        original_file = tmp_path / "large_but_stubborn.webm"
-        original_file.write_bytes(b"a" * 100000)  # 100KB
-
-        temp_output = tmp_path / "large_but_stubborn.tmp.webm"
-        temp_output.write_bytes(b"b" * 40000)  # 40KB (still > 32KB ICON_MAX_SIZE)
-
-        mock_subprocess_run.side_effect = [
-            MagicMock(returncode=0),  # for the ffmpeg re-encode
-        ]
-
-        with patch.object(Path, 'stat') as mock_stat:
-            mock_stat.side_effect = [
-                MagicMock(st_size=100000),  # initial size
-                MagicMock(st_size=40000),  # after re-encode and replace
-            ]
-            with patch.object(Path, 'replace') as mock_replace:
-                with caplog.at_level(logging.WARNING):
-                    result = converter._reduce_file_size(
-                        original_file, TgWebMConverter.ICON_MAX_SIZE, "96K", "45"
-                    )
-                    assert result is True  # Command itself succeeded
-                    mock_replace.assert_called_once_with(original_file)
-                    assert "Could not reduce large_but_stubborn.webm below 32KB" in caplog.text
+    assert len(results) == 1
+    assert results[0].output_path == str(output_path)
 
 
-class TestConvertToIcon:
-    """Test cases for convert_to_icon method."""
+def test_convert_to_icon_wrapper_returns_boolean(converter):
+    with patch.object(
+        converter,
+        "convert_file",
+        return_value=ConversionResult(
+            asset_id=None,
+            source_path="/tmp/icon.png",
+            mode="icon",
+            success=True,
+        ),
+    ) as convert_file_mock:
+        assert converter.convert_to_icon("/tmp/icon.png") is True
 
-    def test_convert_to_icon_file_not_exists(self, converter, caplog):
-        """Test conversion with a non-existent file."""
-        nonexistent_file = "nonexistent.jpg"
-        with caplog.at_level(logging.ERROR):
-            result = converter.convert_to_icon(nonexistent_file)
-            assert result is False
-            assert len(caplog.records) == 1
-            assert caplog.records[0].levelname == 'ERROR'
-
-    @patch('tg_webm_converter.converter.TgWebMConverter._run_command')
-    @patch('tg_webm_converter.converter.TgWebMConverter._reduce_file_size')
-    def test_convert_to_icon_success(self, mock_reduce_file_size, mock_run_command, converter, tmp_path):
-        """Test successful icon conversion."""
-        input_file = tmp_path / "test.jpg"
-        input_file.touch()
-
-        mock_run_command.return_value = True
-        mock_reduce_file_size.return_value = True
-
-        result = converter.convert_to_icon(str(input_file))
-        assert result is True
-        mock_run_command.assert_called_once()
-        mock_reduce_file_size.assert_called_once()
-        assert "scale='min(100,iw)':'min(100,ih)':flags=lanczos" in " ".join(mock_run_command.call_args[0][0])
-        assert "pad=100:100" in " ".join(mock_run_command.call_args[0][0])
-        assert "-b:v 128K" in " ".join(mock_run_command.call_args[0][0])
-        assert "-crf 35" in " ".join(mock_run_command.call_args[0][0])
-
-    @patch('tg_webm_converter.converter.TgWebMConverter._run_command')
-    @patch('tg_webm_converter.converter.TgWebMConverter._reduce_file_size')
-    def test_convert_to_icon_ffmpeg_failure(self, mock_reduce_file_size, mock_run_command, converter, tmp_path):
-        """Test icon conversion with ffmpeg failure."""
-        input_file = tmp_path / "test.jpg"
-        input_file.touch()
-
-        mock_run_command.return_value = False
-        result = converter.convert_to_icon(str(input_file))
-        assert result is False
-        mock_run_command.assert_called_once()
-        mock_reduce_file_size.assert_not_called() # No reduction if initial conversion fails
-
-    @patch('tg_webm_converter.converter.TgWebMConverter._run_command')
-    @patch('tg_webm_converter.converter.TgWebMConverter._reduce_file_size')
-    def test_convert_to_icon_reduction_failure(self, mock_reduce_file_size, mock_run_command, converter, tmp_path):
-        """Test icon conversion when size reduction fails."""
-        input_file = tmp_path / "test.jpg"
-        input_file.touch()
-
-        mock_run_command.return_value = True
-        mock_reduce_file_size.return_value = False # Reduction fails
-
-        result = converter.convert_to_icon(str(input_file))
-        assert result is False
-        mock_run_command.assert_called_once()
-        mock_reduce_file_size.assert_called_once()
+    convert_file_mock.assert_called_once_with("/tmp/icon.png", "icon")
 
 
-class TestConvertToSticker:
-    """Test cases for convert_to_sticker method."""
+def test_convert_to_sticker_wrapper_returns_boolean(converter):
+    with patch.object(
+        converter,
+        "convert_file",
+        return_value=ConversionResult(
+            asset_id=None,
+            source_path="/tmp/icon.png",
+            mode="sticker",
+            success=False,
+            error="failed",
+        ),
+    ) as convert_file_mock:
+        assert converter.convert_to_sticker("/tmp/icon.png") is False
 
-    def test_convert_to_sticker_file_not_exists(self, converter, caplog):
-        """Test sticker conversion with a non-existent file."""
-        nonexistent_file = "nonexistent.jpg"
-        with caplog.at_level(logging.ERROR):
-            result = converter.convert_to_sticker(nonexistent_file)
-            assert result is False
-            assert "Failed to get dimensions for nonexistent.jpg" in caplog.text
-
-    @patch('tg_webm_converter.converter.TgWebMConverter._get_media_dimensions')
-    @patch('tg_webm_converter.converter.TgWebMConverter._run_command')
-    @patch('tg_webm_converter.converter.TgWebMConverter._reduce_file_size')
-    def test_convert_to_sticker_success(
-        self, mock_reduce_file_size, mock_run_command, mock_get_dimensions, converter, tmp_path
-    ):
-        """Test successful sticker conversion."""
-        input_file = tmp_path / "test.jpg"
-        input_file.touch()
-
-        mock_get_dimensions.return_value = (1000, 500)  # Landscape image
-        mock_run_command.return_value = True
-        mock_reduce_file_size.return_value = True
-
-        result = converter.convert_to_sticker(str(input_file))
-        assert result is True
-        mock_get_dimensions.assert_called_once_with(input_file)
-        mock_run_command.assert_called_once()
-        mock_reduce_file_size.assert_called_once()
-        # Check scale filter for landscape (512px on longest side; width)
-        assert "scale=512:-1:flags=lanczos" in " ".join(mock_run_command.call_args[0][0])
-        assert "-b:v 256K" in " ".join(mock_run_command.call_args[0][0])
-        assert "-crf 30" in " ".join(mock_run_command.call_args[0][0])
-
-    @patch('tg_webm_converter.converter.TgWebMConverter._get_media_dimensions')
-    @patch('tg_webm_converter.converter.TgWebMConverter._run_command')
-    @patch('tg_webm_converter.converter.TgWebMConverter._reduce_file_size')
-    def test_convert_to_sticker_portrait_success(
-        self, mock_reduce_file_size, mock_run_command, mock_get_dimensions, converter, tmp_path
-    ):
-        """Test successful sticker conversion for a portrait image."""
-        input_file = tmp_path / "test_portrait.jpg"
-        input_file.touch()
-
-        mock_get_dimensions.return_value = (500, 1000)  # Portrait image
-        mock_run_command.return_value = True
-        mock_reduce_file_size.return_value = True
-
-        result = converter.convert_to_sticker(str(input_file))
-        assert result is True
-        mock_get_dimensions.assert_called_once_with(input_file)
-        mock_run_command.assert_called_once()
-        mock_reduce_file_size.assert_called_once()
-        # Check scale filter for portrait (512px on longest side; height)
-        assert "scale=-1:512:flags=lanczos" in " ".join(mock_run_command.call_args[0][0])
-
-    @patch('tg_webm_converter.converter.TgWebMConverter._get_media_dimensions')
-    @patch('tg_webm_converter.converter.TgWebMConverter._run_command')
-    @patch('tg_webm_converter.converter.TgWebMConverter._reduce_file_size')
-    def test_convert_to_sticker_ffmpeg_failure(
-        self, mock_reduce_file_size, mock_run_command, mock_get_dimensions, converter, tmp_path
-    ):
-        """Test sticker conversion with ffmpeg failure."""
-        input_file = tmp_path / "test.jpg"
-        input_file.touch()
-
-        mock_get_dimensions.return_value = (1000, 500)
-        mock_run_command.return_value = False
-        result = converter.convert_to_sticker(str(input_file))
-        assert result is False
-        mock_get_dimensions.assert_called_once()
-        mock_run_command.assert_called_once()
-        mock_reduce_file_size.assert_not_called()
-
-    @patch('tg_webm_converter.converter.TgWebMConverter._get_media_dimensions')
-    def test_convert_to_sticker_get_dimensions_failure(self, mock_get_dimensions, converter, tmp_path):
-        """Test sticker conversion when getting dimensions fails."""
-        input_file = tmp_path / "test.jpg"
-        input_file.touch()
-
-        mock_get_dimensions.return_value = None  # Failed to get dimensions
-        result = converter.convert_to_sticker(str(input_file))
-        assert result is False
-        mock_get_dimensions.assert_called_once()
-        # Ensure _run_command and _reduce_file_size are not called
-        with patch('tg_webm_converter.converter.TgWebMConverter._run_command') as mock_run_command, \
-             patch('tg_webm_converter.converter.TgWebMConverter._reduce_file_size') as mock_reduce_file_size:
-            converter.convert_to_sticker(str(input_file))
-            mock_run_command.assert_not_called()
-            mock_reduce_file_size.assert_not_called()
-
-
-class TestFindSupportedFiles:
-    """Test cases for find_supported_files method."""
-
-    def test_find_supported_files_empty_directory(self, converter, tmp_path):
-        """Test finding files in empty directory."""
-        # tmp_path is initially empty
-        files = converter.find_supported_files()
-        assert files == []
-
-    def test_find_supported_files_with_images(self, converter, tmp_path):
-        """Test finding supported image files."""
-        # Create a mix of supported and unsupported files
-        (tmp_path / "test.jpg").touch()
-        (tmp_path / "image.png").touch()
-        (tmp_path / "video.mp4").touch()
-        (tmp_path / "document.txt").touch()
-        (tmp_path / "archive.zip").touch()
-        (tmp_path / "photo.jpeg").touch()
-        (tmp_path / "anim.gif").touch()
-        (tmp_path / "web_icon.webp").touch()
-
-        expected_files = sorted([
-            Path("anim.gif"),
-            Path("image.png"),
-            Path("photo.jpeg"),
-            Path("test.jpg"),
-            Path("video.mp4"),
-            Path("web_icon.webp"),
-        ])
-
-        original_cwd = Path.cwd()
-        try:
-            import os
-            os.chdir(tmp_path)
-            files = converter.find_supported_files()
-        finally:
-            os.chdir(original_cwd) # Restore original CWD
-
-        assert files == expected_files
-
-    def test_find_supported_files_case_insensitive(self, converter, tmp_path):
-        """Test finding files with different case extensions."""
-        (tmp_path / "test.JPG").touch()
-        (tmp_path / "image.PNG").touch()
-        (tmp_path / "video.Mp4").touch()
-        (tmp_path / "graphic.Bmp").touch()
-        (tmp_path / "TiffFile.TIFF").touch()
-        (tmp_path / "random.txt").touch()
-
-        expected_files = sorted([]) # No files will be found with only lowercase glob patterns for uppercase extensions
-
-        files = converter.find_supported_files()
-        assert files == expected_files
+    convert_file_mock.assert_called_once_with("/tmp/icon.png", "sticker")

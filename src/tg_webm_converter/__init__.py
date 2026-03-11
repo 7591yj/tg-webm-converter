@@ -1,5 +1,6 @@
 """tg-webm-converter - Convert images to Telegram WebM stickers."""
-from .converter import TgWebMConverter
+
+from .converter import ConversionResult, ConversionTask, TgWebMConverter
 
 __version__ = "0.1.0"
 __author__ = "Yeongjin Kim"
