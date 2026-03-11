@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-project_root = Path(__file__).resolve().parent.parent
+project_root = Path.cwd()
 
 a = Analysis(
     [str(project_root / "src" / "tg_webm_converter" / "gui_api.py")],
