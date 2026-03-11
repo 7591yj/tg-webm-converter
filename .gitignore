@@ -156,6 +156,8 @@ MANIFEST
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+!pyinstaller/
+!pyinstaller/gui_api.spec
 
 # Installer logs
 pip-log.txt
@@ -295,4 +297,3 @@ poetry.toml
 pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/pycharm+all,python,macos
-

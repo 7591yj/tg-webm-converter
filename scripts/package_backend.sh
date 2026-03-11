@@ -15,7 +15,7 @@ require_command() {
 require_command poetry
 
 cd "$ROOT_DIR"
-poetry run pyinstaller -y pyinstaller/gui_api.spec
+poetry run pyinstaller -y "$ROOT_DIR/pyinstaller/gui_api.spec"
 
 BACKEND_DIR="$ROOT_DIR/dist/backend"
 mkdir -p "$BACKEND_DIR"
