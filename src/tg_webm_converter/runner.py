@@ -43,17 +43,23 @@ class ConversionRunner:
 
     def _run_single_icon_conversion(self) -> bool:
         """Runs the conversion process for a single icon file."""
-        logging.info("Converting icon %s to a 100x100 icon...", self.args.icon_file)
+        logging.info(
+            "Converting icon %s to a 100x100 icon...", self.args.icon_file
+        )
         return self.converter.convert_to_icon(self.args.icon_file)
 
     def _run_single_sticker_conversion(self) -> bool:
         """Runs the conversion process for a single sticker file."""
-        logging.info("Converting sticker %s to a 512x512 sticker...", self.args.file)
+        logging.info(
+            "Converting sticker %s to a 512x512 sticker...", self.args.file
+        )
         return self.converter.convert_to_sticker(self.args.file)
 
     def _run_batch_conversion(self) -> bool:
         """Runs the conversion process for a batch of files."""
-        logging.info("Finding supported image files in directory %s...", self.args.output)
+        logging.info(
+            "Finding supported image files in directory %s...", self.args.output
+        )
         files = self.converter.find_supported_files()
 
         if not files:
@@ -69,17 +75,25 @@ class ConversionRunner:
             log_prefix = f"[{i:2d}/{total:2d}] "
 
             if is_icon:
-                logging.info("%s Converting %s to icon...", log_prefix, file_path)
+                logging.info(
+                    "%s Converting %s to icon...", log_prefix, file_path
+                )
                 success = self.converter.convert_to_icon(str(file_path))
             else:
-                logging.info("%s Converting %s to sticker...", log_prefix, file_path)
+                logging.info(
+                    "%s Converting %s to sticker...", log_prefix, file_path
+                )
                 success = self.converter.convert_to_sticker(str(file_path))
 
             if success:
                 successful += 1
 
         logging.info("-" * 20)
-        logging.info("Conversion complete! %d/%d files converted successfully!", successful, total)
+        logging.info(
+            "Conversion complete! %d/%d files converted successfully!",
+            successful,
+            total,
+        )
         logging.info("Files saved in: %s/", self.converter.output_dir)
 
         return successful == total

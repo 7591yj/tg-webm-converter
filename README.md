@@ -60,18 +60,18 @@ tg-webm-converter --icon-file icon.png
 
 1. Clone the repository
 
-    ```bash
-    git clone https://github.com/7591yj/tg-webm-converter.git
-    cd tg-webm-converter
-    ```
+   ```bash
+   git clone https://github.com/7591yj/tg-webm-converter.git
+   cd tg-webm-converter
+   ```
 
 2. Install Dependencies with Poetry
 
    Poetry will automatically create a virtual environment for the project and install all required dependencies.
 
-    ```bash
-    poetry install
-    ```
+   ```bash
+   poetry install
+   ```
 
 ### Running from Source
 
@@ -95,7 +95,7 @@ poetry run pytest
 ## Future Plans
 
 - Consider a GUI version for easier use.
-- Optimize performance for large batch conversions. 
+- Optimize performance for large batch conversions.
 - Explore options for even smaller file sizes.
 
 ## License

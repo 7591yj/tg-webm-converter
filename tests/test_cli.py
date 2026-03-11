@@ -8,17 +8,18 @@ from tg_webm_converter.cli import main, parse_arguments
 
 
 def run_main_with_args(args):
-    with patch.object(sys, 'argv',["prog_name"] + args):
+    with patch.object(sys, "argv", ["prog_name"] + args):
         main()
+
 
 class TestCLI:
     """Test cases for CLI functionality."""
 
-    @patch('tg_webm_converter.cli.ConversionRunner')
+    @patch("tg_webm_converter.cli.ConversionRunner")
     def test_main_no_arguments_no_files(self, mock_runner_class, caplog):
         """Test main with no arguments and no image files."""
         mock_instance = mock_runner_class.return_value
-        mock_instance.run.return_value = True # Simulate success
+        mock_instance.run.return_value = True  # Simulate success
 
         with pytest.raises(SystemExit) as exc_info:
             main()
@@ -107,12 +108,17 @@ class TestCLI:
 
         assert exc_info.value.code == 1
         assert any(
-            r.levelname == 'ERROR' and "An error occurred: A wild error appears!" in r.message
+            r.levelname == "ERROR"
+            and "An error occurred: A wild error appears!" in r.message
             for r in caplog.records
         )
         assert len(caplog.records) == 1
-        assert caplog.records[0].levelname == 'ERROR'
-        assert caplog.records[0].message == "An error occurred: %s" % "A wild error appears!"
+        assert caplog.records[0].levelname == "ERROR"
+        assert (
+            caplog.records[0].message
+            == "An error occurred: %s" % "A wild error appears!"
+        )
+
 
 class TestArgumentParsing:
     """

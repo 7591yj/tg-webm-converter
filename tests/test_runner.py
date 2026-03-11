@@ -28,7 +28,9 @@ def test_runner_single_file(mock_converter_class, mock_args):
         assert runner.run() is True
 
     mock_converter_class.assert_called_once_with("./webm_test")
-    mock_converter_instance.convert_to_sticker.assert_called_once_with("sticker.png")
+    mock_converter_instance.convert_to_sticker.assert_called_once_with(
+        "sticker.png"
+    )
 
 
 @patch("tg_webm_converter.runner.TgWebMConverter")

@@ -27,7 +27,7 @@ def sample_images(temp_dir):
         "test.png",
         "test.gif",
         "icon.webp",
-        "large_image.jpeg"
+        "large_image.jpeg",
     ]
 
     for filename in image_files:
@@ -48,7 +48,7 @@ def converter(temp_dir):
 @pytest.fixture
 def mock_ffmpeg_success():
     """Mock successful ffmpeg execution."""
-    with patch('subprocess.run') as mock_run:
+    with patch("subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0)
         yield mock_run
 
@@ -56,7 +56,7 @@ def mock_ffmpeg_success():
 @pytest.fixture
 def mock_ffmpeg_failure():
     """Mock failed ffmpeg execution."""
-    with patch('subprocess.run') as mock_run:
+    with patch("subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=1)
         yield mock_run
 
@@ -64,10 +64,10 @@ def mock_ffmpeg_failure():
 @pytest.fixture
 def mock_ffprobe_success():
     """Mock successful ffprobe execution for getting dimensions."""
-    with patch('subprocess.run') as mock_run:
+    with patch("subprocess.run") as mock_run:
         # Mock ffprobe calls for width and height
         mock_run.side_effect = [
             MagicMock(returncode=0, stdout="1024"),  # width
-            MagicMock(returncode=0, stdout="768")  # height
+            MagicMock(returncode=0, stdout="768"),  # height
         ]
         yield mock_run
