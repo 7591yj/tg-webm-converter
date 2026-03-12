@@ -1,5 +1,4 @@
 import logging
-import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -19,19 +18,16 @@ def test_init_checks_custom_dependency_commands(tmp_path):
     output_dir = tmp_path / "nested" / "output"
 
     with patch("shutil.which") as which_mock:
-        which_mock.side_effect = ["/usr/bin/custom-ffmpeg", None]
+        which_mock.return_value = None
 
-        with pytest.raises(FileNotFoundError, match="custom-ffprobe"):
+        with pytest.raises(FileNotFoundError, match="custom-ffmpeg"):
             TgWebMConverter(
                 str(output_dir),
                 ffmpeg_command="custom-ffmpeg",
                 ffprobe_command="custom-ffprobe",
             )
 
-    assert [call.args[0] for call in which_mock.call_args_list] == [
-        "custom-ffmpeg",
-        "custom-ffprobe",
-    ]
+    assert [call.args[0] for call in which_mock.call_args_list] == ["custom-ffmpeg"]
 
 
 def test_run_command_logs_failures(converter, caplog):
@@ -62,54 +58,6 @@ def test_run_command_handles_unexpected_errors(converter, caplog):
             assert converter._run_command(["ffmpeg"]) is False
 
     assert "An unexpected error occurred while running command: bad things" in caplog.text
-
-
-def test_get_media_dimensions_parses_ffprobe_output(converter, tmp_path):
-    input_path = tmp_path / "sample.mp4"
-    input_path.write_bytes(b"video")
-
-    with patch(
-        "subprocess.run",
-        return_value=MagicMock(stdout="1920x1080\n"),
-    ) as run_mock:
-        dimensions = converter._get_media_dimensions(input_path)
-
-    assert dimensions == (1920, 1080)
-    assert run_mock.call_args.args[0][0] == "ffprobe"
-
-
-def test_get_media_dimensions_returns_none_on_invalid_output(
-    converter, tmp_path, caplog
-):
-    input_path = tmp_path / "sample.mp4"
-    input_path.write_bytes(b"video")
-
-    with patch(
-        "subprocess.run",
-        return_value=MagicMock(stdout="not-dimensions"),
-    ):
-        with caplog.at_level(logging.ERROR):
-            dimensions = converter._get_media_dimensions(input_path)
-
-    assert dimensions is None
-    assert f"Failed to get dimensions for {input_path.name}" in caplog.text
-
-
-def test_get_media_dimensions_returns_none_on_subprocess_error(
-    converter, tmp_path, caplog
-):
-    input_path = tmp_path / "sample.mp4"
-    input_path.write_bytes(b"video")
-
-    with patch(
-        "subprocess.run",
-        side_effect=subprocess.SubprocessError("ffprobe failed"),
-    ):
-        with caplog.at_level(logging.ERROR):
-            dimensions = converter._get_media_dimensions(input_path)
-
-    assert dimensions is None
-    assert "ffprobe failed" in caplog.text
 
 
 def test_reduce_file_size_returns_early_for_small_files(converter, tmp_path):
@@ -326,7 +274,7 @@ def test_convert_file_returns_icon_failure_when_reduction_fails(converter, tmp_p
     )
 
 
-def test_convert_file_returns_structured_success_for_landscape_sticker(
+def test_convert_file_returns_structured_success_for_sticker(
     converter, tmp_path
 ):
     input_path = tmp_path / "sample.png"
@@ -335,35 +283,18 @@ def test_convert_file_returns_structured_success_for_landscape_sticker(
     output_path.write_bytes(b"x" * 256)
 
     with patch.object(
-        converter, "_get_media_dimensions", return_value=(1000, 500)
-    ), patch.object(converter, "_run_command", return_value=True) as run_mock, patch.object(
+        converter, "_run_command", return_value=True
+    ) as run_mock, patch.object(
         converter, "_reduce_file_size", return_value=True
     ):
         result = converter.convert_file(str(input_path), "sticker", asset_id="asset-1")
 
     assert result.success is True
     assert result.output_path == str(output_path)
-    assert "scale=512:-1:flags=lanczos,fps=30" in run_mock.call_args.args[0]
-
-
-def test_convert_file_returns_structured_success_for_portrait_sticker(
-    converter, tmp_path
-):
-    input_path = tmp_path / "sample.png"
-    input_path.write_bytes(b"img")
-    output_path = converter.output_dir / "sample.webm"
-    output_path.write_bytes(b"x" * 256)
-
-    with patch.object(
-        converter, "_get_media_dimensions", return_value=(500, 1000)
-    ), patch.object(converter, "_run_command", return_value=True) as run_mock, patch.object(
-        converter, "_reduce_file_size", return_value=True
-    ):
-        result = converter.convert_file(str(input_path), "sticker", asset_id="asset-1")
-
-    assert result.success is True
-    assert result.output_path == str(output_path)
-    assert "scale=-1:512:flags=lanczos,fps=30" in run_mock.call_args.args[0]
+    assert (
+        "scale='if(gte(iw,ih),512,-1)':'if(gte(iw,ih),-1,512)':flags=lanczos,"
+        "fps=30"
+    ) in run_mock.call_args.args[0]
 
 
 def test_convert_file_returns_sticker_failure_when_ffmpeg_fails(converter, tmp_path):
@@ -371,8 +302,8 @@ def test_convert_file_returns_sticker_failure_when_ffmpeg_fails(converter, tmp_p
     input_path.write_bytes(b"img")
 
     with patch.object(
-        converter, "_get_media_dimensions", return_value=(1000, 500)
-    ), patch.object(converter, "_run_command", return_value=False), patch.object(
+        converter, "_run_command", return_value=False
+    ), patch.object(
         converter, "_reduce_file_size"
     ) as reduce_mock:
         result = converter.convert_file(str(input_path), "sticker", asset_id="asset-1")
@@ -394,8 +325,8 @@ def test_convert_file_returns_sticker_failure_when_reduction_fails(
     input_path.write_bytes(b"img")
 
     with patch.object(
-        converter, "_get_media_dimensions", return_value=(1000, 500)
-    ), patch.object(converter, "_run_command", return_value=True), patch.object(
+        converter, "_run_command", return_value=True
+    ), patch.object(
         converter, "_reduce_file_size", return_value=False
     ):
         result = converter.convert_file(str(input_path), "sticker", asset_id="asset-1")
@@ -406,24 +337,6 @@ def test_convert_file_returns_sticker_failure_when_reduction_fails(
         mode="sticker",
         success=False,
         error="Failed to reduce sticker file size",
-    )
-
-
-def test_convert_file_returns_sticker_failure_when_dimensions_unavailable(
-    converter, tmp_path
-):
-    input_path = tmp_path / "sample.png"
-    input_path.write_bytes(b"img")
-
-    with patch.object(converter, "_get_media_dimensions", return_value=None):
-        result = converter.convert_file(str(input_path), "sticker", asset_id="asset-1")
-
-    assert result == ConversionResult(
-        asset_id="asset-1",
-        source_path=str(input_path.resolve()),
-        mode="sticker",
-        success=False,
-        error="Failed to read media dimensions",
     )
 
 

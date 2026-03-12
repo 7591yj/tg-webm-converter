@@ -3,7 +3,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import Iterable, List, Optional, Sequence
 
 
 @dataclass(frozen=True)
@@ -57,14 +57,15 @@ class TgWebMConverter:
         self._check_dependencies()
 
     def _check_dependencies(self) -> None:
-        """Check if ffmpeg and ffprobe are installed and accessible."""
-        for cmd in [self.ffmpeg_command, self.ffprobe_command]:
-            if not shutil.which(cmd):
-                logging.error(
-                    "%s not found. Please install it and ensure it's in your PATH.",
-                    cmd,
-                )
-                raise FileNotFoundError(f"Required command not found: {cmd}")
+        """Check if ffmpeg is installed and accessible."""
+        if not shutil.which(self.ffmpeg_command):
+            logging.error(
+                "%s not found. Please install it and ensure it's in your PATH.",
+                self.ffmpeg_command,
+            )
+            raise FileNotFoundError(
+                f"Required command not found: {self.ffmpeg_command}"
+            )
 
     def _run_command(self, args: Sequence[str]) -> bool:
         """Run a subprocess command; log errors if any."""
@@ -92,33 +93,6 @@ class TgWebMConverter:
 
     def is_supported_file(self, input_path: Path) -> bool:
         return input_path.suffix.lower() in self.SUPPORTED_EXTENSIONS
-
-    def _get_media_dimensions(
-        self, input_path: Path
-    ) -> Optional[Tuple[int, int]]:
-        args = [
-            self.ffprobe_command,
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=width,height",
-            "-of",
-            "csv=p=0:s=x",
-            str(input_path),
-        ]
-        try:
-            result = subprocess.run(
-                args, capture_output=True, text=True, check=True
-            )
-            width, height = map(int, result.stdout.strip().split("x"))
-            return width, height
-        except (subprocess.SubprocessError, ValueError) as error:
-            logging.error(
-                "Failed to get dimensions for %s: %s", input_path.name, error
-            )
-            return None
 
     def _reduce_file_size(
         self, file_path: Path, max_size: int, bitrate: str, crf: str
@@ -301,20 +275,10 @@ class TgWebMConverter:
     def _convert_to_sticker_result(
         self, input_path: Path, output_path: Path, asset_id: Optional[str]
     ) -> ConversionResult:
-        dimensions = self._get_media_dimensions(input_path)
-        if not dimensions:
-            return ConversionResult(
-                asset_id=asset_id,
-                source_path=str(input_path),
-                mode="sticker",
-                success=False,
-                error="Failed to read media dimensions",
-            )
-
-        width, height = dimensions
-        scale_filter = "scale=512:-1:flags=lanczos"
-        if height > width:
-            scale_filter = "scale=-1:512:flags=lanczos"
+        scale_filter = (
+            "scale='if(gte(iw,ih),512,-1)':'if(gte(iw,ih),-1,512)'"
+            ":flags=lanczos"
+        )
 
         args = [
             self.ffmpeg_command,
