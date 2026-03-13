@@ -153,11 +153,16 @@ def test_reduce_file_size_warns_when_output_is_still_too_large(
 def test_find_supported_files_is_case_insensitive(converter, tmp_path):
     (tmp_path / "one.PNG").write_bytes(b"img")
     (tmp_path / "two.mp4").write_bytes(b"video")
+    (tmp_path / "three.webm").write_bytes(b"video")
     (tmp_path / "three.txt").write_text("x")
 
     files = converter.find_supported_files(str(tmp_path))
 
-    assert files == [tmp_path / "one.PNG", tmp_path / "two.mp4"]
+    assert files == [
+        tmp_path / "one.PNG",
+        tmp_path / "three.webm",
+        tmp_path / "two.mp4",
+    ]
 
 
 def test_convert_file_rejects_unsupported_input(converter, tmp_path):
@@ -234,6 +239,28 @@ def test_convert_file_returns_structured_success_for_icon(converter, tmp_path):
     assert "pad=100:100:(ow-iw)/2:(oh-ih)/2:color=0x00000000,fps=30" in " ".join(
         run_mock.call_args.args[0]
     )
+
+
+def test_convert_file_accepts_webm_input_for_sticker(converter, tmp_path):
+    input_path = tmp_path / "sticker.webm"
+    input_path.write_bytes(b"video")
+    output_path = converter.output_dir / "sticker.webm"
+    output_path.write_bytes(b"x" * 128)
+
+    with patch.object(
+        converter, "_run_command", return_value=True
+    ) as run_mock, patch.object(converter, "_reduce_file_size", return_value=True):
+        result = converter.convert_file(
+            str(input_path),
+            "sticker",
+            output_filename="sticker.webm",
+            asset_id="asset-1",
+        )
+
+    assert result.success is True
+    assert result.asset_id == "asset-1"
+    assert result.output_path == str(output_path)
+    assert run_mock.called is True
 
 
 def test_convert_file_returns_icon_failure_when_ffmpeg_fails(converter, tmp_path):

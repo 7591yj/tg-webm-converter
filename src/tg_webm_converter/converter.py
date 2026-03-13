@@ -40,6 +40,7 @@ class TgWebMConverter:
         ".bmp",
         ".tiff",
         ".mp4",
+        ".webm",
     ]
     ICON_MAX_SIZE = 32 * 1024
     STICKER_MAX_SIZE = 256 * 1024
