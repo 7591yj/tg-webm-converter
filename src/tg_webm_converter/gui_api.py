@@ -11,26 +11,35 @@ def _emit(event: Dict) -> None:
     print(json.dumps(event), flush=True)
 
 
-def _build_output_file_name(task: Dict, task_index: int) -> str:
-    if task["mode"] == "icon":
-        return "icon.webm"
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
 
-    stem = Path(task["sourcePath"]).stem
-    return f"{stem}-{task['assetId'][:8]}-{task_index}.webm"
+
+def _resolve_task_output_path(task: Dict, output_root: Path) -> Path:
+    output_path = Path(task["outputPath"]).resolve()
+    if not _is_relative_to(output_path, output_root):
+        raise ValueError(
+            f"Task outputPath must be inside outputRoot: {output_path}"
+        )
+    return output_path
 
 
 def run_from_request(payload: Dict) -> int:
-    output_root = payload["outputRoot"]
+    output_root = Path(payload["outputRoot"]).resolve()
     tasks: List[Dict] = payload["tasks"]
+    task_output_paths = {
+        task["assetId"]: _resolve_task_output_path(task, output_root)
+        for task in tasks
+    }
     converter = TgWebMConverter(
-        output_root,
+        str(output_root),
         ffmpeg_command=os.environ.get("STICKER_SMITH_FFMPEG", "ffmpeg"),
         ffprobe_command=os.environ.get("STICKER_SMITH_FFPROBE", "ffprobe"),
     )
-    overrides = {
-        task["assetId"]: _build_output_file_name(task, index)
-        for index, task in enumerate(tasks, start=1)
-    }
 
     _emit(
         {
@@ -56,7 +65,7 @@ def run_from_request(payload: Dict) -> int:
         result = converter.convert_file(
             task["sourcePath"],
             task["mode"],
-            output_filename=overrides[task["assetId"]],
+            output_path=str(task_output_paths[task["assetId"]]),
             asset_id=task["assetId"],
         )
 
