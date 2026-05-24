@@ -141,8 +141,15 @@ class TgWebMConverter:
         return True
 
     def _build_output_path(
-        self, input_path: Path, mode: str, output_filename: Optional[str] = None
+        self,
+        input_path: Path,
+        mode: str,
+        output_filename: Optional[str] = None,
+        output_path: Optional[str] = None,
     ) -> Path:
+        if output_path:
+            return Path(output_path).resolve()
+
         if output_filename:
             return self.output_dir / output_filename
 
@@ -182,6 +189,7 @@ class TgWebMConverter:
         input_file: str,
         mode: str,
         output_filename: Optional[str] = None,
+        output_path: Optional[str] = None,
         asset_id: Optional[str] = None,
     ) -> ConversionResult:
         input_path = Path(input_file).resolve()
@@ -195,16 +203,18 @@ class TgWebMConverter:
                 error=validation_error.error,
             )
 
-        output_path = self._build_output_path(input_path, mode, output_filename)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+        resolved_output_path = self._build_output_path(
+            input_path, mode, output_filename, output_path
+        )
+        resolved_output_path.parent.mkdir(parents=True, exist_ok=True)
 
         if mode == "icon":
             return self._convert_to_icon_result(
-                input_path, output_path, asset_id
+                input_path, resolved_output_path, asset_id
             )
         if mode == "sticker":
             return self._convert_to_sticker_result(
-                input_path, output_path, asset_id
+                input_path, resolved_output_path, asset_id
             )
 
         return ConversionResult(

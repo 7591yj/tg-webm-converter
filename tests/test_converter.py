@@ -241,6 +241,27 @@ def test_convert_file_returns_structured_success_for_icon(converter, tmp_path):
     )
 
 
+def test_convert_file_accepts_explicit_output_path(converter, tmp_path):
+    input_path = tmp_path / "sample.png"
+    input_path.write_bytes(b"img")
+    output_path = tmp_path / "nested" / "asset-1.webm"
+    output_path.parent.mkdir()
+    output_path.write_bytes(b"x" * 128)
+
+    with patch.object(
+        converter, "_run_command", return_value=True
+    ), patch.object(converter, "_reduce_file_size", return_value=True):
+        result = converter.convert_file(
+            str(input_path),
+            "sticker",
+            output_path=str(output_path),
+            asset_id="asset-1",
+        )
+
+    assert result.success is True
+    assert result.output_path == str(output_path.resolve())
+
+
 def test_convert_file_accepts_webm_input_for_sticker(converter, tmp_path):
     input_path = tmp_path / "sticker.webm"
     input_path.write_bytes(b"video")
