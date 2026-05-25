@@ -1,9 +1,10 @@
 import logging
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence
+from typing import Callable, Iterable, List, Optional, Sequence
+from uuid import uuid4
 
 
 @dataclass(frozen=True)
@@ -184,6 +185,32 @@ class TgWebMConverter:
 
         return None
 
+    def _convert_with_in_place_guard(
+        self,
+        input_path: Path,
+        output_path: Path,
+        converter: Callable[[Path], ConversionResult],
+    ) -> ConversionResult:
+        if input_path != output_path:
+            return converter(output_path)
+
+        temp_output_path = output_path.with_name(
+            f"{output_path.stem}.tmp-{uuid4().hex}.webm"
+        )
+        result = converter(temp_output_path)
+
+        if not result.success:
+            if temp_output_path.exists():
+                temp_output_path.unlink()
+            return result
+
+        temp_output_path.replace(output_path)
+        return replace(
+            result,
+            output_path=str(output_path),
+            size_bytes=output_path.stat().st_size,
+        )
+
     def convert_file(
         self,
         input_file: str,
@@ -209,12 +236,20 @@ class TgWebMConverter:
         resolved_output_path.parent.mkdir(parents=True, exist_ok=True)
 
         if mode == "icon":
-            return self._convert_to_icon_result(
-                input_path, resolved_output_path, asset_id
+            return self._convert_with_in_place_guard(
+                input_path,
+                resolved_output_path,
+                lambda safe_output_path: self._convert_to_icon_result(
+                    input_path, safe_output_path, asset_id
+                ),
             )
         if mode == "sticker":
-            return self._convert_to_sticker_result(
-                input_path, resolved_output_path, asset_id
+            return self._convert_with_in_place_guard(
+                input_path,
+                resolved_output_path,
+                lambda safe_output_path: self._convert_to_sticker_result(
+                    input_path, safe_output_path, asset_id
+                ),
             )
 
         return ConversionResult(

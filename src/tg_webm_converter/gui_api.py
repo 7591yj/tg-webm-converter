@@ -28,11 +28,15 @@ def _resolve_task_output_path(task: Dict, output_root: Path) -> Path:
     return output_path
 
 
+def _task_sticker_id(task: Dict) -> str:
+    return task["stickerId"]
+
+
 def run_from_request(payload: Dict) -> int:
     output_root = Path(payload["outputRoot"]).resolve()
     tasks: List[Dict] = payload["tasks"]
     task_output_paths = {
-        task["assetId"]: _resolve_task_output_path(task, output_root)
+        _task_sticker_id(task): _resolve_task_output_path(task, output_root)
         for task in tasks
     }
     converter = TgWebMConverter(
@@ -55,9 +59,9 @@ def run_from_request(payload: Dict) -> int:
     for task in tasks:
         _emit(
             {
-                "type": "asset_started",
+                "type": "sticker_started",
                 "jobId": payload["jobId"],
-                "assetId": task["assetId"],
+                "stickerId": _task_sticker_id(task),
                 "mode": task["mode"],
             }
         )
@@ -65,17 +69,17 @@ def run_from_request(payload: Dict) -> int:
         result = converter.convert_file(
             task["sourcePath"],
             task["mode"],
-            output_path=str(task_output_paths[task["assetId"]]),
-            asset_id=task["assetId"],
+            output_path=str(task_output_paths[_task_sticker_id(task)]),
+            asset_id=_task_sticker_id(task),
         )
 
         if result.success:
             success_count += 1
             _emit(
                 {
-                    "type": "asset_completed",
+                    "type": "sticker_completed",
                     "jobId": payload["jobId"],
-                    "assetId": task["assetId"],
+                    "stickerId": _task_sticker_id(task),
                     "mode": task["mode"],
                     "outputPath": result.output_path,
                     "sizeBytes": result.size_bytes,
@@ -85,9 +89,9 @@ def run_from_request(payload: Dict) -> int:
             failure_count += 1
             _emit(
                 {
-                    "type": "asset_failed",
+                    "type": "sticker_failed",
                     "jobId": payload["jobId"],
-                    "assetId": task["assetId"],
+                    "stickerId": _task_sticker_id(task),
                     "mode": task["mode"],
                     "error": result.error,
                 }

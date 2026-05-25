@@ -262,6 +262,37 @@ def test_convert_file_accepts_explicit_output_path(converter, tmp_path):
     assert result.output_path == str(output_path.resolve())
 
 
+def test_convert_file_uses_temporary_output_for_in_place_conversion(
+    converter, tmp_path
+):
+    input_path = tmp_path / "sticker.webm"
+    input_path.write_bytes(b"source")
+
+    def fake_run_command(args):
+        output_path = args[-1]
+        assert output_path != str(input_path.resolve())
+        assert output_path.endswith(".webm")
+        with open(output_path, "wb") as file:
+            file.write(b"converted")
+        return True
+
+    with patch.object(
+        converter, "_run_command", side_effect=fake_run_command
+    ), patch.object(converter, "_reduce_file_size", return_value=True):
+        result = converter.convert_file(
+            str(input_path),
+            "sticker",
+            output_path=str(input_path),
+            asset_id="asset-1",
+        )
+
+    assert result.success is True
+    assert result.output_path == str(input_path.resolve())
+    assert result.size_bytes == len(b"converted")
+    assert input_path.read_bytes() == b"converted"
+    assert not list(tmp_path.glob("*.tmp-*.webm"))
+
+
 def test_convert_file_accepts_webm_input_for_sticker(converter, tmp_path):
     input_path = tmp_path / "sticker.webm"
     input_path.write_bytes(b"video")

@@ -25,7 +25,7 @@ def test_run_from_request_emits_ndjson_events(capsys, tmp_path):
                 "outputRoot": str(tmp_path / "out"),
                 "tasks": [
                     {
-                        "assetId": "asset-1",
+                        "stickerId": "sticker-1",
                         "sourcePath": str(image_path),
                         "mode": "icon",
                         "outputPath": str(tmp_path / "out" / "icon.webm"),
@@ -38,8 +38,8 @@ def test_run_from_request_emits_ndjson_events(capsys, tmp_path):
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert [event["type"] for event in events] == [
         "job_started",
-        "asset_started",
-        "asset_completed",
+        "sticker_started",
+        "sticker_completed",
         "job_finished",
     ]
     assert events[2]["outputPath"].endswith("icon.webm")
@@ -47,7 +47,7 @@ def test_run_from_request_emits_ndjson_events(capsys, tmp_path):
         str(image_path),
         "icon",
         output_path=str((tmp_path / "out" / "icon.webm").resolve()),
-        asset_id="asset-1",
+        asset_id="sticker-1",
     )
 
 
@@ -66,10 +66,10 @@ def test_run_from_request_returns_failure_exit_code(capsys, tmp_path):
                 "outputRoot": str(tmp_path / "out"),
                 "tasks": [
                     {
-                        "assetId": "asset-1",
+                        "stickerId": "sticker-1",
                         "sourcePath": str(image_path),
                         "mode": "sticker",
-                        "outputPath": str(tmp_path / "out" / "asset-1.webm"),
+                        "outputPath": str(tmp_path / "out" / "sticker-1.webm"),
                     }
                 ],
             }
@@ -77,7 +77,7 @@ def test_run_from_request_returns_failure_exit_code(capsys, tmp_path):
 
     assert exit_code == 1
     events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
-    assert events[2]["type"] == "asset_failed"
+    assert events[2]["type"] == "sticker_failed"
     assert events[-1]["failureCount"] == 1
 
 
@@ -92,10 +92,10 @@ def test_run_from_request_rejects_output_path_outside_output_root(tmp_path):
                 "outputRoot": str(tmp_path / "out"),
                 "tasks": [
                     {
-                        "assetId": "asset-1",
+                        "stickerId": "sticker-1",
                         "sourcePath": str(image_path),
                         "mode": "sticker",
-                        "outputPath": str(tmp_path / "elsewhere" / "asset-1.webm"),
+                        "outputPath": str(tmp_path / "elsewhere" / "sticker-1.webm"),
                     }
                 ],
             }
